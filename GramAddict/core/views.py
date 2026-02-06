@@ -1811,10 +1811,11 @@ class PostsViewList:
         logger.info("Leaving reels viewer.")
         # One back first; if still in viewer, back again.
         self.device.back()
-        random_sleep(inf=0.5, sup=1.2, modulable=False)
+        random_sleep(inf=0.8, sup=1.5, modulable=False)
         if self._is_in_reel_viewer():
+            logger.debug("Still in reel viewer, backing again.")
             self.device.back()
-            random_sleep(inf=0.5, sup=1.2, modulable=False)
+            random_sleep(inf=0.8, sup=1.5, modulable=False)
 
     def in_post_view(self) -> bool:
         """
@@ -1826,8 +1827,10 @@ class PostsViewList:
         markers = [
             {"resourceIdMatches": ResourceID.MEDIA_CONTAINER},
             {"resourceIdMatches": ResourceID.ROW_FEED_PHOTO_PROFILE_NAME},
+            {"resourceIdMatches": ResourceID.ROW_FEED_PROFILE_HEADER},
             {"resourceIdMatches": ResourceID.ROW_FEED_BUTTON_LIKE},
             {"resourceIdMatches": ResourceID.ROW_FEED_TEXT},
+            {"resourceIdMatches": ResourceID.UFI_STACK},
         ]
         for sel in markers:
             try:
@@ -1845,7 +1848,11 @@ class PostsViewList:
         if self._is_in_reel_viewer():
             logger.debug("View classification: REEL (in_post_view fallback)")
         else:
-            logger.debug("View classification: UNKNOWN (not post, not reel)")
+            # Check if we are in search/grid to provide better debug info
+            if self._has_tab_or_search_ui():
+                logger.debug("View classification: SEARCH/GRID (in_post_view fallback)")
+            else:
+                logger.debug("View classification: UNKNOWN (not post, not reel)")
         return False
 
     def maybe_watch_reel_viewer(
@@ -2748,7 +2755,7 @@ class PostsViewList:
             return None, None
         if re.match(r"^,|^\s*$", content_desc, re.IGNORECASE):
             logger.info(
-                "That media is missing content description, so I don't know which kind of video it is."
+                f"That media is missing content description ('{content_desc}'), so I don't know which kind of video it is."
             )
             media_type = MediaType.UNKNOWN
         elif re.match(r"^Photo|^Hidden Photo", content_desc, re.IGNORECASE):
@@ -2776,11 +2783,17 @@ class PostsViewList:
                     n_photos = int(match.group("photo"))
                 if match.group("video"):
                     n_videos = int(match.group("video"))
-            logger.info(
-                f"It's a carousel with {n_photos} photo(s) and {n_videos} video(s)."
-            )
-            obj_count = n_photos + n_videos
-            media_type = MediaType.CAROUSEL
+            if n_photos > 0 or n_videos > 0:
+                logger.info(
+                    f"It's a carousel with {n_photos} photo(s) and {n_videos} video(s)."
+                )
+                obj_count = n_photos + n_videos
+                media_type = MediaType.CAROUSEL
+            else:
+                logger.info(
+                    f"MediaType not found in description: '{content_desc}'. Setting to UNKNOWN."
+                )
+                media_type = MediaType.UNKNOWN
         return media_type, obj_count
 
     def _like_in_post_view(

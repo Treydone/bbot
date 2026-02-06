@@ -885,8 +885,17 @@ def inspect_current_view(user_list) -> Tuple[int, int]:
     """
     return the number of users and each row height in the current view
     """
+    from GramAddict.core.device_facade import DeviceFacade
+
     user_list.wait()
-    lst = [item.get_height() for item in user_list if item.wait()]
+    lst = []
+    for item in user_list:
+        try:
+            if item.wait():
+                lst.append(item.get_height())
+        except DeviceFacade.JsonRpcError:
+            logger.debug("Item disappeared while inspecting view.")
+            continue
     if not lst:
         raise EmptyList
     row_height, n_users = Counter(lst).most_common()[0]

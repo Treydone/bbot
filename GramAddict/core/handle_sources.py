@@ -464,7 +464,11 @@ def handle_likers(
             row_height, n_users = inspect_current_view(user_container)
             try:
                 for item in user_container:
-                    cur_row_height = item.get_height()
+                    try:
+                        cur_row_height = item.get_height()
+                    except DeviceFacade.JsonRpcError:
+                        logger.debug("Item has disappeared.")
+                        continue
                     if cur_row_height < row_height:
                         continue
                     element_opened = False
@@ -924,7 +928,11 @@ def handle_followers(
         row_height, n_users = inspect_current_view(user_list)
         try:
             for item in user_list:
-                cur_row_height = item.get_height()
+                try:
+                    cur_row_height = item.get_height()
+                except DeviceFacade.JsonRpcError:
+                    logger.debug("Item has disappeared.")
+                    continue
                 if cur_row_height < row_height:
                     continue
                 user_info_view = item.child(index=1)
