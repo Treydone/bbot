@@ -88,6 +88,10 @@ class LikeFromURLs(Plugin):
                             logger.info("Post already liked!")
                         else:
                             _, content_desc = post_view_list._get_media_container()
+                            logger.debug(f"like_from_urls: content_desc from _get_media_container = '{content_desc}'")
+                            if content_desc is None:
+                                logger.warning("Content description is None, skipping this post.")
+                                continue
 
                             (
                                 media_type,

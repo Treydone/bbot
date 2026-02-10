@@ -1269,13 +1269,19 @@ class SearchView:
             )
 
         if reels_count <= 0:
-            logger.info("Reel viewer detected; watch-reels disabled, exiting viewer.")
-            # Back twice in case the first back closes overlays only
-            self.device.back()
-            random_sleep(inf=0.5, sup=1.2, modulable=False)
-            self.device.back()
-            random_sleep(inf=0.5, sup=1.2, modulable=False)
-            return True
+            if current_job not in (None, "feed"):
+                logger.info(
+                    "Reel viewer detected and watch-reels is disabled; watching 1 reel since it was opened from search/grid."
+                )
+                reels_count = 1
+            else:
+                logger.info("Reel viewer detected; watch-reels disabled, exiting viewer.")
+                # Back twice in case the first back closes overlays only
+                self.device.back()
+                random_sleep(inf=0.5, sup=1.2, modulable=False)
+                self.device.back()
+                random_sleep(inf=0.5, sup=1.2, modulable=False)
+                return True
 
         like_pct = get_value(args.reels_like_percentage, None, 0)
         doubletap_pct = get_value(args.reels_like_doubletap_percentage, None, 0)
@@ -1727,6 +1733,7 @@ class PostsViewList:
         if not self.in_post_view():
             return
         media, content_desc = self._get_media_container()
+        logger.debug(f"_log_media_type: content_desc from _get_media_container = '{content_desc}'")
         if content_desc is None:
             return
         media_type, obj_count = self.detect_media_type(content_desc)
@@ -1894,12 +1901,18 @@ class PostsViewList:
                 self.last_reel_handled = True
             return handled
 
-        # Respect 0 == disabled: just back out safely.
+        # Respect 0 == disabled: handle at least the current reel if we were forced here.
         if reels_count <= 0:
-            logger.info("Reel viewer detected; watch-reels disabled, exiting viewer.")
-            self._exit_reel_viewer()
-            self.last_reel_handled = True
-            return True
+            if force:
+                logger.info(
+                    "Reel viewer detected and watch-reels is disabled; watching 1 reel since it was opened from search/grid."
+                )
+                reels_count = 1
+            else:
+                logger.info("Reel viewer detected; watch-reels disabled, exiting viewer.")
+                self._exit_reel_viewer()
+                self.last_reel_handled = True
+                return True
         like_pct = get_value(args.reels_like_percentage, None, 0)
         doubletap_pct = get_value(args.reels_like_doubletap_percentage, None, 0)
         dwell_regular = get_value(args.reels_watch_time, None, 6, its_time=True)
@@ -2740,7 +2753,17 @@ class PostsViewList:
 
     def _get_media_container(self):
         media = self.device.find(resourceIdMatches=ResourceID.CAROUSEL_AND_MEDIA_GROUP)
-        content_desc = media.get_desc() if media.exists() else None
+        content_desc = None
+        if media.exists():
+            try:
+                content_desc = media.get_desc()
+                # Check if content is still loading (empty or very short description)
+                if content_desc and len(content_desc) < 10:
+                    logger.debug(f"Media content description seems incomplete: '{content_desc[:20]}...'")
+                    content_desc = None
+            except Exception as e:
+                logger.debug(f"Could not retrieve media content description: {e}")
+                content_desc = None
         return media, content_desc
 
     @staticmethod
@@ -2750,12 +2773,13 @@ class PostsViewList:
         :return: MediaType and count
         :rtype: MediaType, int
         """
+        logger.debug(f"detect_media_type called with content_desc: '{content_desc}'")
         obj_count = 1
         if content_desc is None:
             return None, None
         if re.match(r"^,|^\s*$", content_desc, re.IGNORECASE):
             logger.info(
-                f"That media is missing content description ('{content_desc}'), so I don't know which kind of video it is."
+                "Media content description is empty or whitespace. Skipping detailed media type detection."
             )
             media_type = MediaType.UNKNOWN
         elif re.match(r"^Photo|^Hidden Photo", content_desc, re.IGNORECASE):
@@ -2791,7 +2815,7 @@ class PostsViewList:
                 media_type = MediaType.CAROUSEL
             else:
                 logger.info(
-                    f"MediaType not found in description: '{content_desc}'. Setting to UNKNOWN."
+                    f"⚠️ Could not determine media type from description: '{content_desc[:50]}...'. Setting to UNKNOWN."
                 )
                 media_type = MediaType.UNKNOWN
         return media_type, obj_count
@@ -2807,6 +2831,7 @@ class PostsViewList:
         if skip_media_check:
             return
         media, content_desc = self._get_media_container()
+        logger.debug(f"_like_in_post_view: content_desc from _get_media_container = '{content_desc}'")
         if content_desc is None:
             return
         if not already_watched:
@@ -2866,6 +2891,10 @@ class PostsViewList:
         logger.debug("Checking if it's an AD or an hashtag..")
         owner_name = post_owner_obj.get_text() or post_owner_obj.get_desc() or ""
         if not owner_name:
+            if not getattr(args, "use_ocr", False):
+                logger.debug("Can't find the owner name and OCR is disabled, skip.")
+                return is_ad, is_hashtag, None
+
             logger.info("Can't find the owner name, need to use OCR.")
             try:
                 import pytesseract as pt
@@ -3281,8 +3310,7 @@ class OpenedPostView:
         :rtype: None
         """
         if (
-            media_type
-            in (MediaType.IGTV, MediaType.REEL, MediaType.VIDEO, MediaType.UNKNOWN)
+            media_type in (MediaType.IGTV, MediaType.REEL, MediaType.VIDEO)
             and args.watch_video_time != "0"
         ):
             in_fullscreen, _ = self._is_video_in_fullscreen()
@@ -3309,6 +3337,9 @@ class OpenedPostView:
             watching_time = get_value(
                 args.watch_photo_time, "Watching photo for {}s.", 0, its_time=True
             )
+        elif media_type == MediaType.UNKNOWN:
+            logger.info("Unknown media type, skipping watching.")
+            return None
         else:
             return None
         if watching_time > 0:
@@ -3439,7 +3470,8 @@ class PostsGridView:
         post_view = row_view.child(index=col)
         if not post_view.exists():
             return None, None, None
-        content_desc = post_view.ui_info()["contentDescription"]
+        content_desc = post_view.ui_info().get("contentDescription")
+        logger.debug(f"navigateToPost: content_desc from ui_info = '{content_desc}'")
         media_type, obj_count = PostsViewList.detect_media_type(content_desc)
         post_view.click()
 
@@ -4011,9 +4043,15 @@ class ProfileView(ActionBarView):
 
             element_to_swipe_over = element_to_swipe_over_obj.get_bounds()["top"]
             try:
-                bar_container = self.device.find(
+                bar_container_obj = self.device.find(
                     resourceIdMatches=ResourceID.ACTION_BAR_CONTAINER
-                ).get_bounds()["bottom"]
+                )
+                if not bar_container_obj.exists(Timeout.SHORT):
+                    # Fallback if action bar container is not found
+                    logger.debug("Action bar container not found, using display height.")
+                    bar_container = self.device.get_info()["displayHeight"] / 10
+                else:
+                    bar_container = bar_container_obj.get_bounds()["bottom"]
 
                 logger.info("Scrolled down to see more posts.")
                 self.device.swipe_points(

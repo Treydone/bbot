@@ -44,6 +44,7 @@ FIELD_BLACKLIST_WORDS = "blacklist_words"
 FIELD_MANDATORY_WORDS = "mandatory_words"
 FIELD_SPECIFIC_ALPHABET = "specific_alphabet"
 FIELD_BIO_LANGUAGE = "biography_language"
+FIELD_SKIP_BIO_CHECK = "skip_bio_check"
 FIELD_BIO_BANNED_LANGUAGE = "biography_banned_language"
 FIELD_MIN_POSTS = "min_posts"
 FIELD_MIN_LIKERS = "min_likers"
@@ -225,6 +226,7 @@ class Filter:
             field_max_potency_ratio = self.conditions.get(FIELD_MAX_POTENCY_RATIO, 999)
             field_blacklist_words = self.conditions.get(FIELD_BLACKLIST_WORDS, [])
             field_mandatory_words = self.conditions.get(FIELD_MANDATORY_WORDS, [])
+            field_skip_bio_check = self.conditions.get(FIELD_SKIP_BIO_CHECK, True)
             field_specific_alphabet = self.conditions.get(FIELD_SPECIFIC_ALPHABET)
             field_bio_language = self.conditions.get(FIELD_BIO_LANGUAGE)
             field_bio_banned_language = self.conditions.get(FIELD_BIO_BANNED_LANGUAGE)
@@ -430,7 +432,7 @@ class Filter:
             .split()
         )
 
-        if not cleaned_biography and (
+        if not field_skip_bio_check and not cleaned_biography and (
             len(field_mandatory_words) > 0
             or field_bio_language is not None
             or field_specific_alphabet is not None

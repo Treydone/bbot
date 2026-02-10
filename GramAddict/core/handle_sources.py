@@ -6,7 +6,7 @@ from os import path
 from atomicwrites import atomic_write
 from colorama import Fore
 
-from GramAddict.core.device_facade import Direction, Timeout
+from GramAddict.core.device_facade import DeviceFacade, Direction, Timeout
 from GramAddict.core.navigation import (
     nav_to_blogger,
     nav_to_feed,

@@ -886,7 +886,6 @@ def inspect_current_view(user_list) -> Tuple[int, int]:
     return the number of users and each row height in the current view
     """
     from GramAddict.core.device_facade import DeviceFacade
-
     user_list.wait()
     lst = []
     for item in user_list:

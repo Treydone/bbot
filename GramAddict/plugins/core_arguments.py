@@ -149,6 +149,11 @@ class CoreArguments(Plugin):
                 "default": "15-30",
             },
             {
+                "arg": "--use-ocr",
+                "help": "use OCR (pytesseract) to detect username when normal methods fail",
+                "action": "store_true",
+            },
+            {
                 "arg": "--watch-photo-time",
                 "nargs": None,
                 "help": "amount of time (seconds) you want to watch a photo before interact with it, set to 0 to disable this feature. It can be a number (e.g. 20) or a range (e.g. 20-40)",
