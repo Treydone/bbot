@@ -293,10 +293,10 @@ def interact_with_user(
                         like_succeed = opened_post_view.like_video()
                         logger.debug("Closing video...")
                         device.back()
-                elif media_type in (MediaType.CAROUSEL, MediaType.PHOTO):
+                elif media_type in (MediaType.CAROUSEL, MediaType.PHOTO, MediaType.UNKNOWN, None):
                     if media_type == MediaType.CAROUSEL:
                         _browse_carousel(device, obj_count)
-                    opened_post_view.watch_media(media_type)
+                    opened_post_view.watch_media(media_type if media_type in (MediaType.CAROUSEL, MediaType.PHOTO) else MediaType.PHOTO)
                     like_succeed = opened_post_view.like_post()
                 if like_succeed:
                     register_like(device, session_state)

@@ -1732,8 +1732,8 @@ class PostsViewList:
 
         if not self.in_post_view():
             return
-        media, content_desc = self._get_media_container()
-        logger.debug(f"_log_media_type: content_desc from _get_media_container = '{content_desc}'")
+        media, content_desc, children_count = self._get_media_container()
+        logger.debug(f"_log_media_type: content_desc from _get_media_container = '{content_desc}', children = {children_count}")
         if content_desc is None:
             return
         media_type, obj_count = self.detect_media_type(content_desc)
@@ -1811,7 +1811,7 @@ class PostsViewList:
                     "Fallback viewpager detected, but tab/search UI is visible; skip reel classification."
                 )
                 return False
-            logger.debug("View classification: UNKNOWN (fallback=viewpager, no reel markers)")
+            logger.debug("Fallback viewpager detected but no reel markers; likely normal feed.")
         return False
 
     def _exit_reel_viewer(self):
@@ -2564,7 +2564,7 @@ class PostsViewList:
                     )
                     return True, new_description, username, is_ad, is_hashtag, has_tags
             if not post_description.exists():
-                media, content_desc = self._get_media_container()
+                media, content_desc, children_count = self._get_media_container()
                 if content_desc:
                     new_description = content_desc.upper()
                     if new_description != last_description:
@@ -2667,7 +2667,7 @@ class PostsViewList:
         is_ad = False
         is_hashtag = False
         if username is None and mode == Owner.GET_NAME and current_job == "feed":
-            _, content_desc = self._get_media_container()
+            _, content_desc, _ = self._get_media_container()
             if content_desc:
                 media_username = _parse_username_from_tile_desc(content_desc)
                 if media_username:
@@ -2754,17 +2754,31 @@ class PostsViewList:
     def _get_media_container(self):
         media = self.device.find(resourceIdMatches=ResourceID.CAROUSEL_AND_MEDIA_GROUP)
         content_desc = None
+        children_count = 0
         if media.exists():
             try:
-                content_desc = media.get_desc()
-                # Check if content is still loading (empty or very short description)
-                if content_desc and len(content_desc) < 10:
-                    logger.debug(f"Media content description seems incomplete: '{content_desc[:20]}...'")
-                    content_desc = None
+                content_desc = self._get_desc_with_timeout(media, timeout=5)
+                # Count children to determine media type if description is empty
+                children_count = media.count_items()
             except Exception as e:
                 logger.debug(f"Could not retrieve media content description: {e}")
                 content_desc = None
-        return media, content_desc
+                try:
+                    children_count = media.count_items()
+                except:
+                    children_count = 0
+        return media, content_desc, children_count
+
+    def _get_desc_with_timeout(self, view, timeout=5):
+        """Retrieve content description with timeout to avoid waiting indefinitely"""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _get_desc():
+            return view.get_desc()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_get_desc)
+            return future.result(timeout=timeout)
 
     @staticmethod
     def detect_media_type(content_desc) -> Tuple[Optional[MediaType], Optional[int]]:
@@ -2776,13 +2790,13 @@ class PostsViewList:
         logger.debug(f"detect_media_type called with content_desc: '{content_desc}'")
         obj_count = 1
         if content_desc is None:
-            return None, None
+            return MediaType.PHOTO, obj_count
         if re.match(r"^,|^\s*$", content_desc, re.IGNORECASE):
             logger.info(
-                "Media content description is empty or whitespace. Skipping detailed media type detection."
+                "Media content description is empty or whitespace. Defaulting to PHOTO."
             )
-            media_type = MediaType.UNKNOWN
-        elif re.match(r"^Photo|^Hidden Photo", content_desc, re.IGNORECASE):
+            media_type = MediaType.PHOTO
+        elif re.match(r"^Photo|^Hidden Photo|^Profile picture|^Shared post", content_desc, re.IGNORECASE):
             logger.info("It's a photo.")
             media_type = MediaType.PHOTO
         elif re.match(r"^Video|^Hidden Video", content_desc, re.IGNORECASE):
@@ -2814,10 +2828,10 @@ class PostsViewList:
                 obj_count = n_photos + n_videos
                 media_type = MediaType.CAROUSEL
             else:
-                logger.info(
-                    f"⚠️ Could not determine media type from description: '{content_desc[:50]}...'. Setting to UNKNOWN."
+                logger.debug(
+                    f"Could not determine media type from description: '{content_desc[:50]}'. Defaulting to PHOTO."
                 )
-                media_type = MediaType.UNKNOWN
+                media_type = MediaType.PHOTO
         return media_type, obj_count
 
     def _like_in_post_view(
@@ -2830,12 +2844,22 @@ class PostsViewList:
         opened_post_view = OpenedPostView(self.device)
         if skip_media_check:
             return
-        media, content_desc = self._get_media_container()
-        logger.debug(f"_like_in_post_view: content_desc from _get_media_container = '{content_desc}'")
+        media, content_desc, children_count = self._get_media_container()
+        logger.debug(f"_like_in_post_view: content_desc from _get_media_container = '{content_desc}', children = {children_count}")
         if content_desc is None:
             return
         if not already_watched:
-            media_type, _ = post_view_list.detect_media_type(content_desc)
+            # Use children_count for more reliable detection, even if description exists
+            if children_count == 1:
+                logger.info("It's a photo (detection from children count).")
+                media_type = MediaType.PHOTO
+            elif children_count > 1:
+                logger.info(f"It's a carousel with {children_count} items (detection from children count).")
+                media_type = MediaType.CAROUSEL
+            else:
+                # Fallback to description if children_count is not reliable
+                logger.info(f"Using description-based detection (desc: '{content_desc}').")
+                media_type, _ = post_view_list.detect_media_type(content_desc)
             opened_post_view.watch_media(media_type)
         if mode == LikeMode.DOUBLE_CLICK:
             if media_type in (MediaType.CAROUSEL, MediaType.PHOTO):
@@ -3337,9 +3361,12 @@ class OpenedPostView:
             watching_time = get_value(
                 args.watch_photo_time, "Watching photo for {}s.", 0, its_time=True
             )
-        elif media_type == MediaType.UNKNOWN:
-            logger.info("Unknown media type, skipping watching.")
-            return None
+        elif media_type in (MediaType.UNKNOWN, None):
+            logger.info("Unknown media type, treating as photo for watching.")
+            self._has_tags()
+            watching_time = get_value(
+                args.watch_photo_time, "Watching photo for {}s.", 0, its_time=True
+            )
         else:
             return None
         if watching_time > 0:
@@ -3473,6 +3500,8 @@ class PostsGridView:
         content_desc = post_view.ui_info().get("contentDescription")
         logger.debug(f"navigateToPost: content_desc from ui_info = '{content_desc}'")
         media_type, obj_count = PostsViewList.detect_media_type(content_desc)
+        if media_type is None or media_type == MediaType.UNKNOWN:
+            media_type = MediaType.PHOTO
         post_view.click()
 
         return OpenedPostView(self.device), media_type, obj_count
