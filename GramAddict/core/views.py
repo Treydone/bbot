@@ -1634,6 +1634,7 @@ class PostsViewList:
         self.reel_flag = False
         self._last_media_log_key = None
         self.last_reel_handled = False
+        self._media_cache = None
 
     def _is_single_image_reel(self) -> bool:
         try:
@@ -1732,7 +1733,10 @@ class PostsViewList:
 
         if not self.in_post_view():
             return
-        media, content_desc, children_count = self._get_media_container()
+        if self._media_cache is not None:
+            media, content_desc, children_count = self._get_media_container()
+        else:
+            return
         logger.debug(f"_log_media_type: content_desc from _get_media_container = '{content_desc}', children = {children_count}")
         if content_desc is None:
             return
@@ -2253,6 +2257,7 @@ class PostsViewList:
                 zoomable_view_container * 0.5,
             )
         elif swipe == SwipeTo.NEXT_POST:
+            self._clear_media_cache()
             logger.info(
                 "Scroll down to see next post.", extra={"color": f"{Fore.GREEN}"}
             )
@@ -2689,9 +2694,9 @@ class PostsViewList:
                 )
                 if not post_owner_obj.exists and notification.exists():
                     logger.warning(
-                        "There is a notification there! Please disable them in settings.. We will wait 10 seconds before continue.."
+                        "There is a notification there! Please disable them in settings.. We will wait a few seconds before continue.."
                     )
-                    sleep(10)
+                    sleep(3)
         post_owner_clickable = False
 
         for _ in range(3):
@@ -2751,13 +2756,20 @@ class PostsViewList:
             resourceIdMatches=ResourceID.ROW_FEED_PHOTO_PROFILE_NAME
         ).get_text()
 
+    def _clear_media_cache(self):
+        self._media_cache = None
+
     def _get_media_container(self):
+        if self._media_cache is not None:
+            cached_desc, cached_count = self._media_cache
+            media = self.device.find(resourceIdMatches=ResourceID.CAROUSEL_AND_MEDIA_GROUP)
+            return media, cached_desc, cached_count
         media = self.device.find(resourceIdMatches=ResourceID.CAROUSEL_AND_MEDIA_GROUP)
         content_desc = None
         children_count = 0
         if media.exists():
             try:
-                content_desc = self._get_desc_with_timeout(media, timeout=5)
+                content_desc = self._get_desc_with_timeout(media, timeout=3)
                 # Count children to determine media type if description is empty
                 children_count = media.count_items()
             except Exception as e:
@@ -2767,9 +2779,10 @@ class PostsViewList:
                     children_count = media.count_items()
                 except:
                     children_count = 0
+        self._media_cache = (content_desc, children_count)
         return media, content_desc, children_count
 
-    def _get_desc_with_timeout(self, view, timeout=5):
+    def _get_desc_with_timeout(self, view, timeout=3):
         """Retrieve content description with timeout to avoid waiting indefinitely"""
         from concurrent.futures import ThreadPoolExecutor
 

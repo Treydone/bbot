@@ -125,7 +125,7 @@ class CoreArguments(Plugin):
                 "nargs": None,
                 "help": "chance of watching stories on a particular profile, 30-40 by default. It can be a number (e.g. 20) or a range (e.g. 20-40)",
                 "metavar": "50-70",
-                "default": "30-40",
+                "default": "20-30",
             },
             {
                 "arg": "--carousel-count",
@@ -139,14 +139,14 @@ class CoreArguments(Plugin):
                 "nargs": None,
                 "help": "chance of watching photos in carousel, 60-70 by default. It can be a number (e.g. 75) or a range (e.g. 60-70)",
                 "metavar": "10-90",
-                "default": "60-70",
+                "default": "30-50",
             },
             {
                 "arg": "--watch-video-time",
                 "nargs": None,
                 "help": "amount of time (seconds) you want to watch a video before interact with it, set to 0 to disable this feature. It can be a number (e.g. 20) or a range (e.g. 20-40)",
                 "metavar": "15-30",
-                "default": "15-30",
+                "default": "5-15",
             },
             {
                 "arg": "--use-ocr",
@@ -158,7 +158,7 @@ class CoreArguments(Plugin):
                 "nargs": None,
                 "help": "amount of time (seconds) you want to watch a photo before interact with it, set to 0 to disable this feature. It can be a number (e.g. 20) or a range (e.g. 20-40)",
                 "metavar": "3-4",
-                "default": "3-4",
+                "default": "2-3",
             },
             {
                 "arg": "--interactions-count",
@@ -172,7 +172,7 @@ class CoreArguments(Plugin):
                 "nargs": None,
                 "help": "chance to interact with user/hashtag or place when applicable (currently in hashtag or place-posts-recent/top)",
                 "metavar": "50",
-                "default": "50",
+                "default": "70",
             },
             {
                 "arg": "--like-ads-percentage",

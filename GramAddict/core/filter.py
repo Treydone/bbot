@@ -602,9 +602,9 @@ class Filter:
                     logger.info("Profile loaded!")
                 else:
                     logger.warning(
-                        "Profile not fully loaded after 16s. Is your connection ok? Let's sleep for 1-2 minutes."
+                        "Profile not fully loaded after 16s. Is your connection ok? Let's sleep a bit more."
                     )
-                    random_sleep(60, 120, modulable=False)
+                    random_sleep(10, 20, modulable=False)
                     if profile_picture.exists():
                         logger.warning(
                             "Profile won't load! Maybe you're soft-banned or you've lost your connection!"
