@@ -167,6 +167,16 @@ class DeviceFacade:
                 self.deviceV2.settings["operation_delay_range"] = (0, 0)
             except Exception:
                 pass
+
+            # Cap the client-side default wait_timeout. IG 420+ shows inline
+            # auto-play reels in posts: without this cap, any selector that
+            # never matches still burns the full default (20s) before returning.
+            # (The server-side waitForIdleTimeout is already 0 on this
+            # atx-agent build, so we do not need to tune Configurator here.)
+            try:
+                self.deviceV2.settings["wait_timeout"] = 8.0
+            except Exception:
+                pass
         except ImportError:
             raise ImportError("Please install uiautomator2: pip3 install uiautomator2")
 

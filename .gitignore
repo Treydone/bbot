@@ -20,3 +20,9 @@ Pipfile.lock
 *.log*
 *.ini
 *.db
+
+# Secrets
+.env
+**/.env
+*.env.local
+

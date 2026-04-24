@@ -26,6 +26,7 @@ from GramAddict.core.utils import (
     ActionBlockedError,
     Square,
     get_value,
+    open_instagram_with_url,
     random_choice,
     random_sleep,
     save_crash,
@@ -1036,9 +1037,61 @@ class PlacesView:
         )
 
 
+_USER_TARGET_JOB_PREFIXES = ("blogger", "interact-from-file", "unfollow", "remove-followers")
+_USER_TARGET_JOB_EXACT = frozenset({"account"})
+
+
+def _job_targets_user_profile(job: Optional[str]) -> bool:
+    """True when ``job`` expects navigate_to_target to land on a user profile.
+
+    Hashtag and place jobs resolve to content views, not profiles; they cannot
+    be reached by a user deep-link, so they stay on the search-UI path.
+
+    Note: the sibling helper ``nav_to_post_likers`` in ``core/navigation.py``
+    passes the literal string ``"account"`` instead of the plugin name, so we
+    accept it explicitly (otherwise blogger-post-likers would skip deep-links).
+    """
+    if not job:
+        return False
+    jl = job.lower()
+    if "hashtag" in jl or "place" in jl:
+        return False
+    if jl in _USER_TARGET_JOB_EXACT:
+        return True
+    return any(jl.startswith(prefix) or jl == prefix for prefix in _USER_TARGET_JOB_PREFIXES)
+
+
 class SearchView:
     def __init__(self, device: DeviceFacade):
         self.device = device
+
+    def _navigate_to_user_via_deeplink(self, target: str) -> bool:
+        """Open a user profile via an Intent URL, bypassing the search UI.
+
+        IG 420+ search results default to a visual 'For you' grid where text-
+        matching the username lands on a post/reel instead of the profile. The
+        ``instagram://user?username=…`` scheme is handled in-app on all modern
+        versions and is immune to those UX changes.
+
+        Returns True iff a profile header is observed after the intent. Falls
+        back to the ``https://www.instagram.com/<user>/`` app-link.
+        """
+        header_selector = case_insensitive_re(
+            f"{ResourceID.ROW_PROFILE_HEADER_IMAGEVIEW}|"
+            f"{ResourceID.PROFILE_HEADER_AVATAR_CONTAINER_TOP_LEFT_STUB}|"
+            f"{ResourceID.PROFILE_HEADER_FULL_NAME}"
+        )
+
+        for url in (
+            f"instagram://user?username={target}",
+            f"https://www.instagram.com/{target}/",
+        ):
+            if not open_instagram_with_url(url):
+                continue
+            header = self.device.find(resourceIdMatches=header_selector)
+            if header.exists(Timeout.LONG):
+                return True
+        return False
 
     def _getSearchEditText(self):
         for _ in range(2):
@@ -1163,6 +1216,19 @@ class SearchView:
     def navigate_to_target(self, target: str, job: str) -> bool:
         target = emoji.emojize(target, use_aliases=True)
         logger.info(f"Navigate to {target}")
+
+        # IG 420+ replaced the old search flow with a visual grid ('For you /
+        # Accounts / ...') where the search UI navigation regularly lands on a
+        # post instead of the profile. Deep-links bypass the whole search
+        # screen, so we try them first for blogger/user jobs.
+        if _job_targets_user_profile(job):
+            if self._navigate_to_user_via_deeplink(target):
+                logger.info(f"Opened @{target} via deep-link (IG 420+ compat).")
+                return True
+            logger.debug(
+                f"Deep-link nav failed for @{target}; falling back to search UI."
+            )
+
         if self.is_on_target_results(target):
             logger.info(f"Already on {target} results; skipping re-search.")
             return True
@@ -1784,6 +1850,12 @@ class PostsViewList:
     def _is_in_reel_viewer(self) -> bool:
         """
         Detect the full-screen reels/clips viewer reliably across recent IG builds.
+
+        Perf note: called many times per post via ``maybe_watch_reel_viewer``'s
+        retry loop. Each selector uses ``Timeout.TINY`` (1s) rather than SHORT
+        (3s) so the full 8-selector scan tops out at ~8s on a non-reel screen
+        instead of ~24s. IG 420+ shows inline auto-play reels inside feed
+        posts — without this cap the bot sits for 90+s per post before giving up.
         """
         if self._has_tab_or_search_ui():
             logger.debug("Search UI visible; skip reel detection.")
@@ -1803,7 +1875,7 @@ class PostsViewList:
         ]
         for sel in strong_selectors:
             try:
-                if self.device.find(**sel).exists(Timeout.SHORT):
+                if self.device.find(**sel).exists(Timeout.TINY):
                     logger.debug(f"View classification: REEL (marker={sel})")
                     return True
             except Exception:
@@ -1882,9 +1954,12 @@ class PostsViewList:
         if self._has_tab_or_search_ui():
             return False
 
-        # Allow a short wait for the viewer to fully render
+        # Allow a short wait for the viewer to fully render. Reduced from 4
+        # iterations to 2 because _is_in_reel_viewer already budgets ~8s per
+        # call (8 × TINY). Four iterations on a non-reel screen added up to
+        # ~100s wall-time per post.
         detected = False
-        for _ in range(4):
+        for _ in range(2):
             if force or self._is_in_reel_viewer():
                 detected = True
                 break
@@ -2847,6 +2922,74 @@ class PostsViewList:
                 media_type = MediaType.PHOTO
         return media_type, obj_count
 
+    def _has_inline_reel_in_post_view(self) -> bool:
+        """Detect whether the current post view renders an inline reel/clip.
+
+        IG 420+ folds many reels into the Post timeline: the post detail
+        screen still has ``row_feed_button_like`` and a caption, but the
+        media container is a ``clips_video_container`` that auto-plays and
+        shows a ``Watch more reels`` overlay when it ends. The normal
+        photo double-tap doesn't register a like on those.
+
+        We only check cheap selectors (TINY timeout) so calling this on
+        every post is ~1s worst-case.
+        """
+        try:
+            if self.device.find(
+                resourceIdMatches=case_insensitive_re(ResourceID.CLIPS_VIDEO_CONTAINER)
+            ).exists(Timeout.TINY):
+                return True
+        except Exception:
+            pass
+        try:
+            if self.device.find(
+                textMatches=case_insensitive_re(r"^Watch more reels$|^Watch again$")
+            ).exists(Timeout.TINY):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _click_heart_button_fast(self) -> bool:
+        """Tap the feed-style heart (``row_feed_button_like``) on the current
+        post view, using resource-id, content-desc or a coord-tap as
+        progressive fallbacks. Returns True if a tap was sent.
+
+        IG 420+ marks the button ``clickable="false"`` on some renditions
+        but the coordinate tap still registers the like.
+        """
+        # 1. resource-id
+        btn = self.device.find(
+            resourceIdMatches=case_insensitive_re(ResourceID.ROW_FEED_BUTTON_LIKE)
+        )
+        if btn.exists(Timeout.TINY):
+            try:
+                btn.click()
+                return True
+            except Exception as exc:
+                logger.debug(f"heart resource-id click raised {exc}; trying content-desc")
+        # 2. content-desc="Like"
+        btn2 = self.device.find(descriptionMatches=case_insensitive_re(r"^Like$"))
+        if btn2.exists(Timeout.TINY):
+            try:
+                btn2.click()
+                return True
+            except Exception as exc:
+                logger.debug(f"heart content-desc click raised {exc}; trying coord fallback")
+        # 3. last-resort: tap by bounds if we know them
+        try:
+            bounds = btn.get_bounds() if btn.exists() else btn2.get_bounds()
+            if bounds:
+                cx = (bounds["left"] + bounds["right"]) // 2
+                cy = (bounds["top"] + bounds["bottom"]) // 2
+                logger.warning(f"heart via raw coord tap ({cx},{cy})")
+                self.device.deviceV2.click(cx, cy)
+                return True
+        except Exception:
+            pass
+        logger.warning("Heart button not found in any form; like skipped.")
+        return False
+
     def _like_in_post_view(
         self,
         mode: LikeMode,
@@ -2857,6 +3000,18 @@ class PostsViewList:
         opened_post_view = OpenedPostView(self.device)
         if skip_media_check:
             return
+
+        # Fast path for IG 420+: when the media container carries a
+        # CLIPS_VIDEO_CONTAINER (inline reel rendered inside a post view), the
+        # classic photo/carousel double-tap toggles play/pause instead of
+        # liking. Skip media-type detection entirely and tap the heart icon
+        # directly — it works for reel-as-post, photo and carousel alike.
+        reel_in_post = self._has_inline_reel_in_post_view()
+        if reel_in_post:
+            logger.info("Reel-as-post detected; using heart-click fast path.")
+            self._click_heart_button_fast()
+            return
+
         media, content_desc, children_count = self._get_media_container()
         logger.debug(f"_like_in_post_view: content_desc from _get_media_container = '{content_desc}', children = {children_count}")
         if content_desc is None:
@@ -2881,6 +3036,19 @@ class PostsViewList:
                     self.device
                 )._get_action_bar_position()
                 media.double_click(obj_over=action_bar_bottom)
+                # IG 420+ post-detail view sometimes shows an inline reel with
+                # a "Watch more reels" overlay; the media double-tap then
+                # toggles play/pause instead of liking. Verify the like
+                # registered and fall back to the heart icon if not.
+                random_sleep(inf=0.5, sup=1.0, modulable=False)
+                if not PostsViewList(self.device)._check_if_liked():
+                    logger.info(
+                        "Double-tap didn't register a like (likely reel-in-post); "
+                        "falling back to heart click."
+                    )
+                    self._like_in_post_view(
+                        mode=LikeMode.SINGLE_CLICK, skip_media_check=True
+                    )
             else:
                 self._like_in_post_view(
                     mode=LikeMode.SINGLE_CLICK, skip_media_check=True
@@ -2892,6 +3060,18 @@ class PostsViewList:
                 self.device.find(
                     resourceIdMatches=ResourceID.ROW_FEED_BUTTON_LIKE
                 ).click()
+            else:
+                # IG 420+ marks the like button with clickable="false" on some
+                # views but it's still functional via a coordinate tap. Last
+                # resort: click by content-desc which resolves to the same view.
+                btn = self.device.find(
+                    descriptionMatches=case_insensitive_re("^Like$")
+                )
+                if btn.exists(Timeout.SHORT):
+                    logger.info("Clicking heart via content-desc fallback ❤️.")
+                    btn.click()
+                else:
+                    logger.warning("Like button not found in either form; skip like on this post.")
 
     def _follow_in_post_view(self):
         logger.info("Follow blogger in place.")

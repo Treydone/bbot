@@ -638,16 +638,28 @@ def _comment(
             )
         # look at hashtag of comment
         for _ in range(2):
+            # IG 420+ marks row_feed_button_comment clickable="false" on many
+            # renditions (post-detail on reel-as-post); we also accept a match
+            # by content-desc="Comment" so the tap reaches the same widget.
             comment_button = device.find(
                 resourceId=ResourceID.ROW_FEED_BUTTON_COMMENT,
             )
+            if not comment_button.exists(Timeout.SHORT):
+                comment_button = device.find(
+                    descriptionMatches=case_insensitive_re(r"^Comment$")
+                )
             if comment_button.exists():
                 logger.info("Open comments of post.")
                 comment_button.click()
                 comment_box = device.find(
                     resourceId=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
-                    enabled="true",
                 )
+                if not comment_box.exists(Timeout.SHORT):
+                    # IG 420+ sometimes exposes the comment input as an
+                    # EditText without a resource-id; match by class + hint.
+                    comment_box = device.find(
+                        classNameMatches=r".*EditText",
+                    )
                 if comment_box.exists():
                     comment = load_random_comment(my_username, media_type)
                     if comment is None:
@@ -657,9 +669,23 @@ def _comment(
                     logger.info(
                         f"Write comment: {comment}", extra={"color": f"{Fore.CYAN}"}
                     )
-                    comment_box.set_text(
-                        comment, Mode.PASTE if args.dont_type else Mode.TYPE
-                    )
+                    # Write via the underlying uiautomator2 selector to avoid
+                    # DeviceFacade.set_text's FastInputIME switch that breaks
+                    # the focused-element lookup on AutoCompleteTextView.
+                    v2 = getattr(comment_box, "viewV2", None)
+                    typed = False
+                    if v2 is not None:
+                        try:
+                            v2.click()
+                            random_sleep(inf=0.3, sup=0.8, modulable=False)
+                            v2.set_text(comment)
+                            typed = True
+                        except Exception as exc:
+                            logger.debug(f"direct set_text on comment_box failed ({exc}); wrapper fallback")
+                    if not typed:
+                        comment_box.set_text(
+                            comment, Mode.PASTE if args.dont_type else Mode.TYPE
+                        )
 
                     post_button = device.find(
                         resourceId=ResourceID.LAYOUT_COMMENT_THREAD_POST_BUTTON_CLICK_AREA
