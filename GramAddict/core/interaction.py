@@ -626,16 +626,26 @@ def _comment(
         universal_actions._swipe_points(
             direction=Direction.DOWN, delta_y=randint(150, 250)
         )
-        tab_bar = device.find(
-            resourceId=ResourceID.TAB_BAR,
-        )
-        media = device.find(
-            resourceIdMatches=ResourceID.MEDIA_CONTAINER,
-        )
-        if int(tab_bar.get_bounds()["top"]) - int(media.get_bounds()["bottom"]) < 150:
-            universal_actions._swipe_points(
-                direction=Direction.DOWN, delta_y=randint(150, 250)
-            )
+        # The optional second swipe depends on tab_bar / media bounds; on
+        # IG 420+ the tab_bar is sometimes detached from the hierarchy in
+        # post-detail (esp. after a like animation), making get_bounds raise
+        # JsonRpcError. The extra swipe is a nice-to-have, not a requirement
+        # for commenting — fall through silently when the lookup fails.
+        try:
+            tab_bar = device.find(resourceId=ResourceID.TAB_BAR)
+            media = device.find(resourceIdMatches=ResourceID.MEDIA_CONTAINER)
+            if (
+                tab_bar.exists(Timeout.SHORT)
+                and media.exists(Timeout.SHORT)
+                and int(tab_bar.get_bounds()["top"])
+                - int(media.get_bounds()["bottom"])
+                < 150
+            ):
+                universal_actions._swipe_points(
+                    direction=Direction.DOWN, delta_y=randint(150, 250)
+                )
+        except DeviceFacade.JsonRpcError:
+            pass
         # look at hashtag of comment
         for _ in range(2):
             # IG 420+ marks row_feed_button_comment clickable="false" on many
@@ -651,15 +661,44 @@ def _comment(
             if comment_button.exists():
                 logger.info("Open comments of post.")
                 comment_button.click()
+                # IG 426 often shows a collapsed "Add a comment for @x..."
+                # placeholder TextView instead of an EditText right away;
+                # tap it first to expand the real input.
+                random_sleep(inf=0.6, sup=1.4, modulable=False)
                 comment_box = device.find(
                     resourceId=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
                 )
+                if not comment_box.exists(Timeout.MEDIUM):
+                    placeholder = device.find(
+                        textMatches=case_insensitive_re(
+                            r"^(add a comment|comment as|écris un commentaire|commenter en tant que).*"
+                        )
+                    )
+                    if placeholder.exists(Timeout.SHORT):
+                        logger.debug("Tapping comment placeholder to reveal EditText.")
+                        placeholder.click()
+                        random_sleep(inf=0.4, sup=0.9, modulable=False)
                 if not comment_box.exists(Timeout.SHORT):
                     # IG 420+ sometimes exposes the comment input as an
                     # EditText without a resource-id; match by class + hint.
                     comment_box = device.find(
                         classNameMatches=r".*EditText",
                     )
+                if not comment_box.exists():
+                    # Dump UI hierarchy on first failure so we can identify
+                    # the IG 426 comment composer selector. File rotates per
+                    # session — a single dump per anomaly is enough.
+                    try:
+                        dump_path = "/tmp/bottest/comment_panel.xml"
+                        if not path.exists(dump_path):
+                            xml = device.dump_hierarchy()
+                            with open(dump_path, "w", encoding="utf-8") as fh:
+                                fh.write(xml)
+                            logger.info(
+                                f"Comment EditText not found; dumped UI hierarchy to {dump_path}"
+                            )
+                    except Exception as exc:
+                        logger.debug(f"Comment-panel dump failed: {exc}")
                 if comment_box.exists():
                     comment = load_random_comment(my_username, media_type)
                     if comment is None:

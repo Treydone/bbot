@@ -145,9 +145,10 @@ class WatchReels(Plugin):
                 and self.session_state.totalReelWatched >= reels_watches_limit
             ):
                 if not reel_watch_limit_logged:
-                    logger.info("Reel watch limit reached; stopping session.")
+                    logger.info(
+                        "Reel watch limit reached; ending watch-reels job (other jobs continue)."
+                    )
                     reel_watch_limit_logged = True
-                stop_bot(device, self.sessions, self.session_state)
                 return
             username = PostsViewList(device)._get_reel_author_username()
             if not username:

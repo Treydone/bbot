@@ -1385,17 +1385,14 @@ class SearchView:
                 and session_state.totalReelWatched >= reels_watches_limit
             ):
                 if not reel_watch_limit_logged:
-                    logger.info("Reel watch limit reached; stopping session.")
+                    logger.info(
+                        "Reel watch limit reached; exiting viewer (other jobs continue)."
+                    )
                     reel_watch_limit_logged = True
-                sessions = getattr(configs, "sessions", None)
-                if sessions is None:
-                    logger.warning("Sessions list unavailable; exiting reels viewer.")
-                    self.device.back()
-                    random_sleep(inf=0.5, sup=1.2, modulable=False)
-                    self.device.back()
-                    random_sleep(inf=0.5, sup=1.2, modulable=False)
-                    return True
-                stop_bot(self.device, sessions, session_state)
+                self.device.back()
+                random_sleep(inf=0.5, sup=1.2, modulable=False)
+                self.device.back()
+                random_sleep(inf=0.5, sup=1.2, modulable=False)
                 return True
             username = post_view._get_reel_author_username()
             if not username:
@@ -1452,18 +1449,13 @@ class SearchView:
                         reels_watches_limit > 0
                         and session_state.totalReelWatched >= reels_watches_limit
                     ):
-                        logger.info("Reel watch limit reached; stopping session.")
-                        sessions = getattr(configs, "sessions", None)
-                        if sessions is None:
-                            logger.warning(
-                                "Sessions list unavailable; exiting reels viewer."
-                            )
-                            self.device.back()
-                            random_sleep(inf=0.5, sup=1.2, modulable=False)
-                            self.device.back()
-                            random_sleep(inf=0.5, sup=1.2, modulable=False)
-                            return True
-                        stop_bot(self.device, sessions, session_state)
+                        logger.info(
+                            "Reel watch limit reached; exiting viewer (other jobs continue)."
+                        )
+                        self.device.back()
+                        random_sleep(inf=0.5, sup=1.2, modulable=False)
+                        self.device.back()
+                        random_sleep(inf=0.5, sup=1.2, modulable=False)
                         return True
                 continue
             is_ad = self._is_reel_ad_only()
@@ -1485,16 +1477,10 @@ class SearchView:
                         reels_watches_limit > 0
                         and session_state.totalReelWatched >= reels_watches_limit
                     ):
-                        logger.info("Reel watch limit reached; stopping session.")
-                        sessions = getattr(configs, "sessions", None)
-                        if sessions is None:
-                            logger.warning(
-                                "Sessions list unavailable; exiting reels viewer."
-                            )
-                            self._exit_reel_viewer()
-                            self.last_reel_handled = True
-                            return True
-                        stop_bot(self.device, sessions, session_state)
+                        logger.info(
+                            "Reel watch limit reached; exiting viewer (other jobs continue)."
+                        )
+                        self._exit_reel_viewer()
                         self.last_reel_handled = True
                         return True
                 continue
@@ -1607,18 +1593,13 @@ class SearchView:
                     reels_watches_limit > 0
                     and session_state.totalReelWatched >= reels_watches_limit
                 ):
-                    logger.info("Reel watch limit reached; stopping session.")
-                    sessions = getattr(configs, "sessions", None)
-                    if sessions is None:
-                        logger.warning(
-                            "Sessions list unavailable; exiting reels viewer."
-                        )
-                        self.device.back()
-                        random_sleep(inf=0.5, sup=1.2, modulable=False)
-                        self.device.back()
-                        random_sleep(inf=0.5, sup=1.2, modulable=False)
-                        return True
-                    stop_bot(self.device, sessions, session_state)
+                    logger.info(
+                        "Reel watch limit reached; exiting viewer (other jobs continue)."
+                    )
+                    self.device.back()
+                    random_sleep(inf=0.5, sup=1.2, modulable=False)
+                    self.device.back()
+                    random_sleep(inf=0.5, sup=1.2, modulable=False)
                     return True
             logger.info("Swiping to next reel.")
             UniversalActions(self.device)._swipe_points(direction=Direction.UP, delta_y=800)
@@ -2079,17 +2060,15 @@ class PostsViewList:
                 and session_state.totalReelWatched >= reels_watches_limit
             ):
                 if not reel_watch_limit_logged:
-                    logger.info("Reel watch limit reached; stopping session.")
+                    logger.info(
+                        "Reel watch limit reached; exiting viewer (other jobs continue)."
+                    )
                     reel_watch_limit_logged = True
-                sessions = getattr(configs, "sessions", None)
-                if sessions is None:
-                    logger.warning("Sessions list unavailable; exiting reels viewer.")
-                    self._exit_reel_viewer()
-                    self.last_reel_handled = True
-                    return True
-                stop_bot(self.device, sessions, session_state)
-                self.last_reel_handled = True
-                return True
+                self._exit_reel_viewer()
+                self.last_reel_handled = False
+                # Return False so handle_sources falls into its recover path
+                # (recover_attempts++ → after 3 misses, advance to next source).
+                return False
             is_ad = self._is_reel_ad_only()
             likes_limit = int(session_state.args.current_likes_limit)
             global_likes_reached = (
@@ -2188,14 +2167,10 @@ class PostsViewList:
                 reels_watches_limit > 0
                 and session_state.totalReelWatched >= reels_watches_limit
             ):
-                logger.info("Reel watch limit reached; stopping session.")
-                sessions = getattr(configs, "sessions", None)
-                if sessions is None:
-                    logger.warning("Sessions list unavailable; exiting reels viewer.")
-                    self._exit_reel_viewer()
-                    self.last_reel_handled = True
-                    return True
-                stop_bot(self.device, sessions, session_state)
+                logger.info(
+                    "Reel watch limit reached; exiting viewer (other jobs continue)."
+                )
+                self._exit_reel_viewer()
                 self.last_reel_handled = True
                 return True
             logger.info("Swiping to next reel.")

@@ -314,6 +314,8 @@ def handle_likers(
     post_description = ""
     nr_same_post = 0
     nr_same_posts_max = 3
+    nr_consecutive_empty_description = 0
+    nr_consecutive_empty_description_limit = 5
     post_view_list = PostsViewList(device)
     opened_post_view = OpenedPostView(device)
     recover_attempts = 0
@@ -357,6 +359,15 @@ def handle_likers(
             _is_hashtag,
             _,
         ) = post_view_list._check_if_last_post(post_description, current_job)
+        if not post_description:
+            nr_consecutive_empty_description += 1
+            if nr_consecutive_empty_description >= nr_consecutive_empty_description_limit:
+                logger.info(
+                    f"{nr_consecutive_empty_description_limit} consecutive posts had no readable description; advancing to next source/job."
+                )
+                break
+        else:
+            nr_consecutive_empty_description = 0
         if getattr(post_view_list, "reel_flag", False):
             post_view_list.reel_flag = False
             if post_view_list.maybe_watch_reel_viewer(
@@ -627,6 +638,11 @@ def handle_posts(
     nr_consecutive_already_interacted = 0
     already_liked_count = 0
     already_liked_count_limit = 20
+    # Bail out of a source when we repeatedly fail to read post descriptions
+    # (IG 426 sometimes shows posts where the description anchor is missing
+    # — we'd otherwise loop indefinitely on the same blogger profile).
+    nr_consecutive_empty_description = 0
+    nr_consecutive_empty_description_limit = 5
     post_view_list = PostsViewList(device)
     opened_post_view = OpenedPostView(device)
     like_ads_percentage = get_value(
@@ -676,6 +692,15 @@ def handle_posts(
             is_hashtag,
             has_tags,
         ) = post_view_list._check_if_last_post(post_description, current_job)
+        if not post_description:
+            nr_consecutive_empty_description += 1
+            if nr_consecutive_empty_description >= nr_consecutive_empty_description_limit:
+                logger.info(
+                    f"{nr_consecutive_empty_description_limit} consecutive posts had no readable description; advancing to next source/job."
+                )
+                break
+        else:
+            nr_consecutive_empty_description = 0
         if getattr(post_view_list, "reel_flag", False):
             post_view_list.reel_flag = False
             if post_view_list.maybe_watch_reel_viewer(
