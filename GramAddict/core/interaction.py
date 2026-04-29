@@ -666,7 +666,7 @@ def _comment(
                 # tap it first to expand the real input.
                 random_sleep(inf=0.6, sup=1.4, modulable=False)
                 comment_box = device.find(
-                    resourceId=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
+                    resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
                 )
                 if not comment_box.exists(Timeout.MEDIUM):
                     placeholder = device.find(
@@ -685,20 +685,15 @@ def _comment(
                         classNameMatches=r".*EditText",
                     )
                 if not comment_box.exists():
-                    # Dump UI hierarchy on first failure so we can identify
-                    # the IG 426 comment composer selector. File rotates per
-                    # session — a single dump per anomaly is enough.
                     try:
                         dump_path = "/tmp/bottest/comment_panel.xml"
                         if not path.exists(dump_path):
-                            xml = device.dump_hierarchy()
-                            with open(dump_path, "w", encoding="utf-8") as fh:
-                                fh.write(xml)
+                            device.dump_hierarchy(dump_path)
                             logger.info(
                                 f"Comment EditText not found; dumped UI hierarchy to {dump_path}"
                             )
                     except Exception as exc:
-                        logger.debug(f"Comment-panel dump failed: {exc}")
+                        logger.warning(f"Comment-panel dump failed: {exc}")
                 if comment_box.exists():
                     comment = load_random_comment(my_username, media_type)
                     if comment is None:
@@ -727,8 +722,14 @@ def _comment(
                         )
 
                     post_button = device.find(
-                        resourceId=ResourceID.LAYOUT_COMMENT_THREAD_POST_BUTTON_CLICK_AREA
+                        resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_POST_BUTTON_CLICK_AREA
                     )
+                    if not post_button.exists(Timeout.SHORT):
+                        # IG 426 fallback: click by content-desc on the icon button.
+                        post_button = device.find(
+                            descriptionMatches=case_insensitive_re(r"^Post$"),
+                            clickable=True,
+                        )
                     post_button.click()
                 else:
                     logger.info("Comments on this post have been limited.")
@@ -738,14 +739,17 @@ def _comment(
 
                 universal_actions.detect_block(device)
                 universal_actions.close_keyboard(device)
-                posted_text = device.find(
-                    text=f"{my_username} {comment}",
+                posted_text = device.find(text=f"{my_username} {comment}")
+                # IG 426 splits the comment into separate views (username + body).
+                # Accept either the legacy concatenated layout or just the body text.
+                comment_body = device.find(textContains=comment[:30])
+                editor_still_focused = device.find(
+                    resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
+                    focused=True,
                 )
-                when_posted = posted_text.sibling(
-                    resourceId=ResourceID.ROW_COMMENT_SUB_ITEMS_BAR
-                ).child(resourceId=ResourceID.ROW_COMMENT_TEXTVIEW_TIME_AGO)
-                if posted_text.exists(Timeout.MEDIUM) and when_posted.exists(
-                    Timeout.MEDIUM
+                if posted_text.exists(Timeout.MEDIUM) or (
+                    comment_body.exists(Timeout.MEDIUM)
+                    and not editor_still_focused.exists()
                 ):
                     logger.info("Comment succeed.", extra={"color": f"{Fore.GREEN}"})
                     session_state.totalComments += 1
@@ -964,6 +968,39 @@ def _follow(device, username, follow_percentage, args, session_state, swipe_amou
             textMatches=case_insensitive_re(FOLLOWBACK_REGEX),
         )
 
+        # IG 420+ fallback: the action-bar follow button is a ViewSwitcher
+        # (resourceId=…/follow_button) that is clickable but has no text;
+        # the label lives in a child TextView (action_bar_overflow_text).
+        if not (
+            follow_button.exists()
+            or unfollow_button.exists()
+            or followback_button.exists()
+        ):
+            vs = device.find(
+                resourceId="com.instagram.android:id/follow_button",
+                clickable=True,
+            )
+            if vs.exists():
+                label = device.find(
+                    resourceId="com.instagram.android:id/action_bar_overflow_text"
+                )
+                state = ""
+                if label.exists():
+                    try:
+                        state = (label.get_text() or "").strip().lower()
+                    except Exception:
+                        state = ""
+                if state == "follow":
+                    follow_button = vs
+                elif state in ("following", "requested"):
+                    unfollow_button = vs
+                elif state == "follow back":
+                    followback_button = vs
+                else:
+                    # Unknown label — treat the ViewSwitcher as Follow
+                    # (safest default; failed click reverts via max_tries loop).
+                    follow_button = vs
+
         if followback_button.exists():
             logger.info(
                 f"@{username} already follows you.",
@@ -978,10 +1015,19 @@ def _follow(device, username, follow_percentage, args, session_state, swipe_amou
         elif follow_button.exists():
             max_tries = 3
             for n in range(max_tries):
-                follow_button.click()
+                try:
+                    follow_button.click()
+                except DeviceFacade.JsonRpcError:
+                    logger.debug("Follow button vanished mid-click; retrying.")
+                    if n < max_tries - 1:
+                        continue
+                    return False
                 if device.find(
                     textMatches=UNFOLLOW_REGEX,
                     clickable=True,
+                ).exists(Timeout.SHORT) or device.find(
+                    resourceId="com.instagram.android:id/action_bar_overflow_text",
+                    textMatches=case_insensitive_re(r"^(Following|Requested)$"),
                 ).exists(Timeout.SHORT):
                     logger.info(f"Followed @{username}", extra={"color": Fore.GREEN})
                     universal_actions.detect_block(device)

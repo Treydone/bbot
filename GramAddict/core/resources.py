@@ -80,9 +80,11 @@ class ResourceID:
         self.LANGUAGE_LIST_LOCALE = f"{APP_ID}:id/language_locale_list"
         self.LAYOUT_COMMENT_THREAD_EDITTEXT = (
             f"{APP_ID}:id/layout_comment_thread_edittext"
+            f"|{APP_ID}:id/layout_comment_thread_edittext_multiline"
         )
         self.LAYOUT_COMMENT_THREAD_POST_BUTTON_CLICK_AREA = (
             f"{APP_ID}:id/layout_comment_thread_post_button_click_area"
+            f"|{APP_ID}:id/layout_comment_thread_post_button_icon"
         )
         self.LAYOUT_CONTAINER_BOTTOM_SHEET = f"{APP_ID}:id/layout_container_bottom_sheet"
         self.LIKE_BUTTON = f"{APP_ID}:id/like_button"

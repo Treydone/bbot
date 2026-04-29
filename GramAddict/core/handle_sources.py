@@ -16,6 +16,7 @@ from GramAddict.core.navigation import (
 from GramAddict.core.resources import ClassName
 from GramAddict.core.storage import FollowingStatus
 from GramAddict.core.utils import (
+    EmptyList,
     get_value,
     inspect_current_view,
     random_choice,
@@ -316,6 +317,8 @@ def handle_likers(
     nr_same_posts_max = 3
     nr_consecutive_empty_description = 0
     nr_consecutive_empty_description_limit = 5
+    nr_consecutive_skipped_posts = 0
+    nr_consecutive_skipped_posts_limit = 12
     post_view_list = PostsViewList(device)
     opened_post_view = OpenedPostView(device)
     recover_attempts = 0
@@ -397,6 +400,12 @@ def handle_likers(
         already_liked, _ = opened_post_view._is_post_liked()
         if already_liked:
             logger.info("Post already liked; skipping to next result.")
+            nr_consecutive_skipped_posts += 1
+            if nr_consecutive_skipped_posts >= nr_consecutive_skipped_posts_limit:
+                logger.info(
+                    f"{nr_consecutive_skipped_posts_limit} consecutive posts skipped without opening likers; advancing to next source/job."
+                )
+                break
             post_view_list.swipe_to_fit_posts(SwipeTo.NEXT_POST)
             continue
         if storage is not None and username and current_job not in (None, "feed"):
@@ -410,6 +419,12 @@ def handle_likers(
                     f"@{username}: already interacted on {interacted_when:%Y/%m/%d %H:%M:%S}. {'Interacting again now' if can_reinteract else 'Skip'}."
                 )
                 if not can_reinteract:
+                    nr_consecutive_skipped_posts += 1
+                    if nr_consecutive_skipped_posts >= nr_consecutive_skipped_posts_limit:
+                        logger.info(
+                            f"{nr_consecutive_skipped_posts_limit} consecutive posts skipped without opening likers; advancing to next source/job."
+                        )
+                        break
                     post_view_list.swipe_to_fit_posts(SwipeTo.NEXT_POST)
                     continue
 
@@ -453,7 +468,14 @@ def handle_likers(
             and number_of_likers != 1
         ):
             post_view_list.open_likers_container()
+            nr_consecutive_skipped_posts = 0
         else:
+            nr_consecutive_skipped_posts += 1
+            if nr_consecutive_skipped_posts >= nr_consecutive_skipped_posts_limit:
+                logger.info(
+                    f"{nr_consecutive_skipped_posts_limit} consecutive posts skipped without opening likers; advancing to next source/job."
+                )
+                break
             post_view_list.swipe_to_fit_posts(SwipeTo.NEXT_POST)
             continue
 
@@ -472,7 +494,13 @@ def handle_likers(
             if user_container is None:
                 logger.warning("Likers list didn't load :(")
                 return
-            row_height, n_users = inspect_current_view(user_container)
+            try:
+                row_height, n_users = inspect_current_view(user_container)
+            except EmptyList:
+                logger.warning(
+                    "Likers list is empty or vanished; ending this source."
+                )
+                return
             try:
                 for item in user_container:
                     try:
@@ -950,7 +978,13 @@ def handle_followers(
         user_list = device.find(
             resourceIdMatches=self.ResourceID.USER_LIST_CONTAINER,
         )
-        row_height, n_users = inspect_current_view(user_list)
+        try:
+            row_height, n_users = inspect_current_view(user_list)
+        except EmptyList:
+            logger.warning(
+                "Followers list is empty or vanished; ending this source."
+            )
+            return
         try:
             for item in user_list:
                 try:
@@ -1052,44 +1086,50 @@ def handle_followers(
                     className=ClassName.LIST_VIEW,
                 )
 
-            if is_myself:
-                logger.info("Need to scroll now", extra={"color": f"{Fore.GREEN}"})
-                list_view.scroll(Direction.UP)
-            else:
-                pressed_retry = False
-                if load_more_button_exists:
-                    retry_button = load_more_button.child(
-                        className=ClassName.IMAGE_VIEW,
-                        descriptionMatches=case_insensitive_re("Retry"),
-                    )
-                    if retry_button.exists():
-                        random_sleep()
-                        """It exist but can disappear without pressing on it"""
-                        if retry_button.exists():
-                            logger.info('Press "Load" button and wait few seconds.')
-                            retry_button.click_retry()
-                            random_sleep(5, 10, modulable=False)
-                            pressed_retry = True
-
-                if need_swipe and not pressed_retry:
-                    scroll_end_detector.notify_skipped_all()
-                    if scroll_end_detector.is_skipped_limit_reached():
-                        return
-                    if scroll_end_detector.is_fling_limit_reached():
-                        logger.info(
-                            "Limit of all followers skipped reached, let's fling.",
-                            extra={"color": f"{Fore.GREEN}"},
-                        )
-                        list_view.fling(Direction.DOWN)
-                    else:
-                        logger.info(
-                            "All followers skipped, let's scroll.",
-                            extra={"color": f"{Fore.GREEN}"},
-                        )
-                        list_view.scroll(Direction.DOWN)
-                else:
+            try:
+                if is_myself:
                     logger.info("Need to scroll now", extra={"color": f"{Fore.GREEN}"})
-                    list_view.scroll(Direction.DOWN)
+                    list_view.scroll(Direction.UP)
+                else:
+                    pressed_retry = False
+                    if load_more_button_exists:
+                        retry_button = load_more_button.child(
+                            className=ClassName.IMAGE_VIEW,
+                            descriptionMatches=case_insensitive_re("Retry"),
+                        )
+                        if retry_button.exists():
+                            random_sleep()
+                            """It exist but can disappear without pressing on it"""
+                            if retry_button.exists():
+                                logger.info('Press "Load" button and wait few seconds.')
+                                retry_button.click_retry()
+                                random_sleep(5, 10, modulable=False)
+                                pressed_retry = True
+
+                    if need_swipe and not pressed_retry:
+                        scroll_end_detector.notify_skipped_all()
+                        if scroll_end_detector.is_skipped_limit_reached():
+                            return
+                        if scroll_end_detector.is_fling_limit_reached():
+                            logger.info(
+                                "Limit of all followers skipped reached, let's fling.",
+                                extra={"color": f"{Fore.GREEN}"},
+                            )
+                            list_view.fling(Direction.DOWN)
+                        else:
+                            logger.info(
+                                "All followers skipped, let's scroll.",
+                                extra={"color": f"{Fore.GREEN}"},
+                            )
+                            list_view.scroll(Direction.DOWN)
+                    else:
+                        logger.info("Need to scroll now", extra={"color": f"{Fore.GREEN}"})
+                        list_view.scroll(Direction.DOWN)
+            except DeviceFacade.JsonRpcError:
+                logger.warning(
+                    "Followers list disappeared during scroll; ending this source."
+                )
+                return
         else:
             logger.info(
                 "No followers were iterated, finish.",

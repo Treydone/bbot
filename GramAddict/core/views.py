@@ -2675,7 +2675,7 @@ class PostsViewList:
                 )
                 universal_actions._swipe_points(direction=Direction.UP, delta_y=600)
                 reel_retry += 1
-                if reel_retry >= 5:
+                if reel_retry >= 3:
                     logger.info("Skip post after repeated missing description.")
                     return False, "", username, is_ad, is_hashtag, has_tags
 
@@ -3424,6 +3424,16 @@ class OpenedPostView:
                     if option.exists(Timeout.SHORT):
                         option.click()
                         random_sleep(inf=1, sup=2, modulable=False)
+
+        try:
+            from os import path as _path
+
+            _dump_p = "/tmp/bottest/comments_thread.xml"
+            if not _path.exists(_dump_p):
+                self.device.dump_hierarchy(_dump_p)
+                logger.info(f"Captured comments-thread hierarchy to {_dump_p}")
+        except Exception as _exc:
+            logger.debug(f"comments-thread dump failed: {_exc}")
 
         liked = 0
         attempts = 0
