@@ -226,6 +226,12 @@ def interact_with_user(
         max_comment_likes_per_post = get_value(
             args.like_comments_per_post, None, 0
         )
+        reply_comments_percentage = get_value(
+            getattr(args, "reply_comments_percentage", None), None, 0
+        )
+        max_replies_per_post = get_value(
+            getattr(args, "reply_comments_per_post", None), None, 0
+        )
         if can_comment_job and comment_percentage != 0:
             max_comments_pro_user = get_value(
                 args.max_comments_pro_user, "Max comment count: {}", 1
@@ -279,7 +285,7 @@ def interact_with_user(
 
             like_succeed = False
             if opened_post_view is None:
-                save_crash(device)
+                logger.debug(f"Could not open post #{i + 1}; skipping.")
                 continue
             already_liked, _ = opened_post_view._is_post_liked()
             if already_liked:
@@ -336,6 +342,24 @@ def interact_with_user(
                     )
                     if liked_comments:
                         session_state.totalLikes += liked_comments
+                        interacted = True
+                replies_done = 0
+                if (
+                    reply_comments_percentage > 0
+                    and max_replies_per_post > 0
+                    and not session_state.check_limit(
+                        limit_type=session_state.Limit.COMMENTS, output=True
+                    )
+                ):
+                    replies_done = opened_post_view.reply_comments(
+                        reply_comments_percentage,
+                        max_replies_per_post,
+                        my_username,
+                        media_type,
+                        lambda mt: load_random_comment(my_username, mt),
+                    )
+                    if replies_done:
+                        session_state.totalComments += replies_done
                         interacted = True
             else:
                 logger.warning("Can't find the post element!")
@@ -725,12 +749,19 @@ def _comment(
                         resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_POST_BUTTON_CLICK_AREA
                     )
                     if not post_button.exists(Timeout.SHORT):
-                        # IG 426 fallback: click by content-desc on the icon button.
                         post_button = device.find(
                             descriptionMatches=case_insensitive_re(r"^Post$"),
                             clickable=True,
                         )
-                    post_button.click()
+                    # IG 426: tap by absolute coords to avoid background_dimmer
+                    # overlay swallowing the click (same fix as reply path).
+                    try:
+                        pb_bounds = post_button.get_bounds()
+                        px = (pb_bounds["left"] + pb_bounds["right"]) // 2
+                        py = (pb_bounds["top"] + pb_bounds["bottom"]) // 2
+                        device.deviceV2.click(px, py)
+                    except Exception:
+                        post_button.click()
                 else:
                     logger.info("Comments on this post have been limited.")
                     universal_actions.close_keyboard(device)
@@ -738,18 +769,28 @@ def _comment(
                     return False
 
                 universal_actions.detect_block(device)
+                random_sleep(inf=1.5, sup=2.5, modulable=False)
                 universal_actions.close_keyboard(device)
                 posted_text = device.find(text=f"{my_username} {comment}")
-                # IG 426 splits the comment into separate views (username + body).
-                # Accept either the legacy concatenated layout or just the body text.
                 comment_body = device.find(textContains=comment[:30])
-                editor_still_focused = device.find(
+                # Composer cleared after submit is the strongest signal.
+                editor_now = device.find(
                     resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
-                    focused=True,
                 )
-                if posted_text.exists(Timeout.MEDIUM) or (
-                    comment_body.exists(Timeout.MEDIUM)
-                    and not editor_still_focused.exists()
+                editor_text = ""
+                if editor_now.exists():
+                    try:
+                        editor_text = (editor_now.get_text() or "").strip()
+                    except Exception:
+                        editor_text = ""
+                composer_cleared = (
+                    editor_text == ""
+                    or editor_text.lower().startswith("add a comment")
+                )
+                if (
+                    posted_text.exists(Timeout.MEDIUM)
+                    or composer_cleared
+                    or comment_body.exists(Timeout.MEDIUM)
                 ):
                     logger.info("Comment succeed.", extra={"color": f"{Fore.GREEN}"})
                     session_state.totalComments += 1

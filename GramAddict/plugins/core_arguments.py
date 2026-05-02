@@ -397,6 +397,20 @@ class CoreArguments(Plugin):
                 "default": None,
             },
             {
+                "arg": "--reply-comments-percentage",
+                "nargs": None,
+                "help": "chance of replying to visible comments when comments are opened, 0 disables it",
+                "metavar": "10-25",
+                "default": "0",
+            },
+            {
+                "arg": "--reply-comments-per-post",
+                "nargs": None,
+                "help": "max number of replies to perform per post when enabled",
+                "metavar": "1-2",
+                "default": "0",
+            },
+            {
                 "arg": "--end-if-likes-limit-reached",
                 "help": "end session if likes limit is reached",
                 "action": "store_true",

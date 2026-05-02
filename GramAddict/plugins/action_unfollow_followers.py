@@ -11,6 +11,7 @@ from GramAddict.core.resources import ResourceID as resources
 from GramAddict.core.scroll_end_detector import ScrollEndDetector
 from GramAddict.core.storage import FollowingStatus
 from GramAddict.core.utils import (
+    EmptyList,
     get_value,
     inspect_current_view,
     random_sleep,
@@ -300,9 +301,19 @@ class ActionUnfollowFollowers(Plugin):
             user_list = device.find(
                 resourceIdMatches=self.ResourceID.USER_LIST_CONTAINER,
             )
-            row_height, n_users = inspect_current_view(user_list)
+            try:
+                row_height, n_users = inspect_current_view(user_list)
+            except EmptyList:
+                logger.warning(
+                    "Followings list is empty or vanished; ending unfollow source."
+                )
+                return
             for item in user_list:
-                cur_row_height = item.get_height()
+                try:
+                    cur_row_height = item.get_height()
+                except DeviceFacade.JsonRpcError:
+                    logger.debug("Following row vanished mid-iteration; skipping.")
+                    continue
                 if cur_row_height < row_height:
                     continue
                 user_info_view = item.child(index=1)

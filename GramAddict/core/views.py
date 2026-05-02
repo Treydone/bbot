@@ -3425,20 +3425,21 @@ class OpenedPostView:
                         option.click()
                         random_sleep(inf=1, sup=2, modulable=False)
 
+        liked = 0
+        attempts = 0
+        comment_list = self.device.find(resourceIdMatches=ResourceID.RECYCLER_VIEW)
+        like_desc_regex = case_insensitive_re(["tap to like comment", "like comment"])
+        # One-shot dump on first iteration so we can audit IG 426 selectors.
         try:
             from os import path as _path
 
             _dump_p = "/tmp/bottest/comments_thread.xml"
             if not _path.exists(_dump_p):
+                random_sleep(inf=1.5, sup=2.5, modulable=False)
                 self.device.dump_hierarchy(_dump_p)
                 logger.info(f"Captured comments-thread hierarchy to {_dump_p}")
         except Exception as _exc:
             logger.debug(f"comments-thread dump failed: {_exc}")
-
-        liked = 0
-        attempts = 0
-        comment_list = self.device.find(resourceIdMatches=ResourceID.RECYCLER_VIEW)
-        like_desc_regex = case_insensitive_re(["tap to like comment", "like comment"])
         while liked < max_likes and attempts < 5:
             like_selector = self.device.find(descriptionMatches=like_desc_regex)
             count = like_selector.count_items()
@@ -3455,7 +3456,11 @@ class OpenedPostView:
                     pass
                 if randint(1, 100) > probability:
                     continue
-                like_btn.click()
+                try:
+                    like_btn.click()
+                except DeviceFacade.JsonRpcError:
+                    logger.debug("Comment-like button vanished mid-click; skipping.")
+                    continue
                 UniversalActions.detect_block(self.device)
                 liked += 1
                 random_sleep(inf=1, sup=2, modulable=False)
@@ -3473,6 +3478,193 @@ class OpenedPostView:
             random_sleep(inf=1, sup=2, modulable=False)
         self.device.back()
         return liked
+
+    def reply_comments(
+        self,
+        probability: int,
+        max_replies: int,
+        my_username: str,
+        media_type,
+        load_reply_text,
+    ) -> int:
+        """Open the comment sheet and reply to a few visible comments.
+
+        ``load_reply_text(media_type)`` returns a random reply string or None.
+        Returns the count of replies confirmed.
+        """
+        if probability <= 0 or max_replies <= 0:
+            return 0
+        logger.info("Opening comments to reply.")
+        comment_button = self.device.find(
+            resourceIdMatches=ResourceID.ROW_FEED_BUTTON_COMMENT
+        )
+        if not comment_button.exists():
+            comment_button = self.device.find(
+                descriptionMatches=case_insensitive_re("comment")
+            )
+        if not comment_button.exists():
+            logger.warning("Cannot find comment button (reply).")
+            return 0
+        comment_button.click()
+        UniversalActions.detect_block(self.device)
+        random_sleep(inf=1, sup=2, modulable=False)
+
+        replied = 0
+        consecutive_failures = 0
+        consecutive_failures_limit = 2
+        attempts = 0
+        comment_list = self.device.find(resourceIdMatches=ResourceID.RECYCLER_VIEW)
+        reply_desc_regex = case_insensitive_re(r"^Reply$")
+        while replied < max_replies and attempts < 5:
+            reply_selector = self.device.find(descriptionMatches=reply_desc_regex)
+            count = reply_selector.count_items()
+            for idx in range(count):
+                if replied >= max_replies:
+                    break
+                if randint(1, 100) > probability:
+                    continue
+                reply_btn = self.device.find(
+                    index=idx, descriptionMatches=reply_desc_regex
+                )
+                if not reply_btn.exists():
+                    continue
+                reply_text = load_reply_text(media_type)
+                if not reply_text:
+                    return replied
+                try:
+                    reply_btn.click()
+                except DeviceFacade.JsonRpcError:
+                    logger.debug("Reply button vanished mid-click; skipping.")
+                    continue
+                random_sleep(inf=0.7, sup=1.4, modulable=False)
+                edit = self.device.find(
+                    resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
+                )
+                if not edit.exists(Timeout.MEDIUM):
+                    edit = self.device.find(classNameMatches=r".*EditText")
+                if not edit.exists():
+                    logger.debug("Reply EditText not found; aborting this reply.")
+                    UniversalActions.close_keyboard(self.device)
+                    self.device.back()
+                    continue
+                # Append reply text after any auto-injected "@username " prefix.
+                v2 = getattr(edit, "viewV2", None)
+                typed = False
+                if v2 is not None:
+                    try:
+                        v2.click()
+                        random_sleep(inf=0.3, sup=0.8, modulable=False)
+                        try:
+                            existing = v2.get_text() or ""
+                        except Exception:
+                            existing = ""
+                        v2.set_text((existing + reply_text).strip())
+                        typed = True
+                    except Exception as exc:
+                        logger.debug(f"reply set_text fallback ({exc}).")
+                if not typed:
+                    try:
+                        edit.set_text(reply_text)
+                    except Exception:
+                        UniversalActions.close_keyboard(self.device)
+                        self.device.back()
+                        continue
+                random_sleep(inf=0.5, sup=1.0, modulable=False)
+                # Capture UI state in reply context so we can audit submit selector.
+                try:
+                    from os import path as _path
+
+                    _rdump = "/tmp/bottest/reply_state.xml"
+                    if not _path.exists(_rdump):
+                        self.device.dump_hierarchy(_rdump)
+                        logger.info(f"Captured reply-state hierarchy to {_rdump}")
+                except Exception as _exc:
+                    logger.debug(f"reply-state dump failed: {_exc}")
+                post_button = self.device.find(
+                    resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_POST_BUTTON_CLICK_AREA
+                )
+                if not post_button.exists(Timeout.SHORT):
+                    post_button = self.device.find(
+                        descriptionMatches=case_insensitive_re(r"^Post$"),
+                        clickable=True,
+                    )
+                if not post_button.exists(Timeout.SHORT):
+                    post_button = self.device.find(
+                        descriptionMatches=case_insensitive_re(r"^(Send|Reply|Submit|Publish)$"),
+                        clickable=True,
+                    )
+                if not post_button.exists():
+                    UniversalActions.close_keyboard(self.device)
+                    self.device.back()
+                    continue
+                try:
+                    # IG 426: tap by absolute center coords to avoid the
+                    # background_dimmer overlay swallowing the click.
+                    pb_bounds = post_button.get_bounds()
+                    px = (pb_bounds["left"] + pb_bounds["right"]) // 2
+                    py = (pb_bounds["top"] + pb_bounds["bottom"]) // 2
+                    self.device.deviceV2.click(px, py)
+                except DeviceFacade.JsonRpcError:
+                    UniversalActions.close_keyboard(self.device)
+                    self.device.back()
+                    continue
+                except Exception as exc:
+                    logger.debug(f"reply submit tap failed ({exc}); fallback to click().")
+                    try:
+                        post_button.click()
+                    except DeviceFacade.JsonRpcError:
+                        UniversalActions.close_keyboard(self.device)
+                        self.device.back()
+                        continue
+                UniversalActions.detect_block(self.device)
+                random_sleep(inf=1.5, sup=2.5, modulable=False)
+                # Verify by checking that the EditText cleared (strongest signal
+                # of submission) or that the reply body shows up in the thread.
+                editor_now = self.device.find(
+                    resourceIdMatches=ResourceID.LAYOUT_COMMENT_THREAD_EDITTEXT,
+                )
+                editor_text = ""
+                if editor_now.exists():
+                    try:
+                        editor_text = (editor_now.get_text() or "").strip()
+                    except Exception:
+                        editor_text = ""
+                # Composer back to empty / hint state (no leftover @user text).
+                composer_cleared = (
+                    editor_text == ""
+                    or editor_text.lower().startswith("add a comment")
+                )
+                body_marker = self.device.find(textContains=reply_text[:20])
+                if composer_cleared or body_marker.exists(Timeout.SHORT):
+                    logger.info(
+                        f"Reply succeed: {reply_text}",
+                        extra={"color": f"{Fore.GREEN}"},
+                    )
+                    replied += 1
+                    consecutive_failures = 0
+                else:
+                    logger.warning("Failed to confirm reply.")
+                    consecutive_failures += 1
+                UniversalActions.close_keyboard(self.device)
+                random_sleep(inf=0.6, sup=1.2, modulable=False)
+                if consecutive_failures >= consecutive_failures_limit:
+                    logger.info(
+                        f"{consecutive_failures_limit} consecutive reply failures; aborting reply phase for this post."
+                    )
+                    self.device.back()
+                    return replied
+            if replied >= max_replies:
+                break
+            if comment_list.exists():
+                comment_list.scroll(Direction.DOWN)
+            else:
+                UniversalActions(self.device)._swipe_points(
+                    direction=Direction.UP, delta_y=600
+                )
+            attempts += 1
+            random_sleep(inf=1, sup=2, modulable=False)
+        self.device.back()
+        return replied
 
     def start_video(self) -> bool:
         """
